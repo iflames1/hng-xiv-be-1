@@ -6,10 +6,11 @@ use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::signal;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{error::AppError, handlers, state::AppState};
 
-const DEFAULT_PORT: &str = "3000";
+const DEFAULT_PORT: &str = "8080";
 
 pub async fn run() -> Result<(), AppError> {
     dotenvy::dotenv().ok();
@@ -47,6 +48,8 @@ pub async fn run() -> Result<(), AppError> {
                     get(handlers::get_profile).delete(handlers::delete_profile),
                 ),
         )
+        .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::permissive())
         .with_state(state);
 
     let port = std::env::var("PORT")
