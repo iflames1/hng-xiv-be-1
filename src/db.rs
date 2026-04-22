@@ -105,8 +105,7 @@ pub async fn count_profiles(pool: &PgPool, filters: &ProfileFilters) -> Result<i
         QueryBuilder::<Postgres>::new("SELECT COUNT(*) as count FROM profiles WHERE 1=1");
     apply_profile_filters(&mut query, filters);
 
-    let row = query.build_query_as::<(i64,)>().fetch_one(pool).await?;
-    Ok(row.0)
+    query.build_query_scalar::<i64>().fetch_one(pool).await
 }
 
 fn build_profiles_base_query(filters: &ProfileFilters) -> QueryBuilder<'static, Postgres> {
