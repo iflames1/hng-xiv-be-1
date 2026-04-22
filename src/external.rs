@@ -1,7 +1,11 @@
 use reqwest::Client;
 use serde::Deserialize;
 
-use crate::{error::AppError, models::NewProfileData, utils::age_group_from_age};
+use crate::{
+    error::AppError,
+    models::NewProfileData,
+    utils::{age_group_from_age, country_name_from_iso},
+};
 
 pub struct ExternalApiClient {
     client: Client,
@@ -54,11 +58,7 @@ impl ExternalApiClient {
         let gender_probability = genderize
             .probability
             .ok_or_else(|| AppError::upstream("Genderize"))?;
-        let sample_size = genderize
-            .count
-            .ok_or_else(|| AppError::upstream("Genderize"))?;
-
-        if sample_size == 0 {
+        if genderize.count.unwrap_or(0) == 0 {
             return Err(AppError::upstream("Genderize"));
         }
 
@@ -82,14 +82,18 @@ impl ExternalApiClient {
             })
             .ok_or_else(|| AppError::upstream("Nationalize"))?;
 
+        let country_name = country_name_from_iso(&country.0)
+            .ok_or_else(|| AppError::upstream("Nationalize"))?
+            .to_string();
+
         Ok(NewProfileData {
             name: name.to_string(),
             gender,
             gender_probability,
-            sample_size,
             age,
             age_group,
             country_id: country.0,
+            country_name,
             country_probability: country.1,
         })
     }
@@ -110,15 +114,10 @@ impl ExternalApiClient {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| {
-                tracing::warn!(api = api_name, url = url, error = %error, "upstream request failed");
-                AppError::upstream(api_name)
-            })?;
+        let response = self.client.get(url).send().await.map_err(|error| {
+            tracing::warn!(api = api_name, url = url, error = %error, "upstream request failed");
+            AppError::upstream(api_name)
+        })?;
 
         if !response.status().is_success() {
             tracing::warn!(api = api_name, url = url, status = %response.status(), "upstream returned non-success status");

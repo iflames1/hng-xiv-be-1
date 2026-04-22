@@ -8,7 +8,7 @@ use tokio::net::TcpListener;
 use tokio::signal;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use crate::{error::AppError, handlers, state::AppState};
+use crate::{db, error::AppError, handlers, models::SeedFile, state::AppState};
 
 const DEFAULT_PORT: &str = "8080";
 
@@ -34,11 +34,19 @@ pub async fn run() -> Result<(), AppError> {
         .await
         .map_err(|_| AppError::internal("failed to run database migrations"))?;
 
+    let seed_file: SeedFile = serde_json::from_str(include_str!("../assets/seed_profiles.json"))
+        .map_err(|_| AppError::internal("failed to parse seed profiles"))?;
+
+    db::seed_profiles(&pool, &seed_file.profiles)
+        .await
+        .map_err(|_| AppError::internal("failed to seed profiles"))?;
+
     let state = AppState::new(pool);
     let app = Router::new()
         .nest(
             "/api/profiles",
             Router::new()
+                .route("/search", get(handlers::search_profiles))
                 .route(
                     "/",
                     post(handlers::create_profile).get(handlers::list_profiles),

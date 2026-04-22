@@ -1,328 +1,201 @@
 # Name Classification Profiles API
 
-A Rust backend service that:
+Rust + Axum + SQLx service for creating and querying profiles.
 
-- Accepts a name
-- Calls three external APIs (Genderize, Agify, Nationalize)
-- Applies classification rules
-- Stores the resulting profile in PostgreSQL
-- Exposes endpoints to create, list, fetch, and delete profiles
+## Endpoints
 
-Built with Axum, Tokio, SQLx, and Reqwest.
+- `POST /api/profiles`
+- `GET /api/profiles/{id}`
+- `DELETE /api/profiles/{id}`
+- `GET /api/profiles` (advanced filtering, sorting, pagination)
+- `GET /api/profiles/search` (rule-based natural language search + pagination)
 
-## Features
+## Profiles Table (Exact Structure)
 
-- `POST /api/profiles` creates a profile from a name
-- De-duplicates by name (returns existing profile instead of creating a new one)
-- `GET /api/profiles/{id}` fetches one profile by UUID
-- `GET /api/profiles` lists profiles with optional filters
-- `DELETE /api/profiles/{id}` deletes a profile
-- Uses `PORT` from environment with fallback to `3000`
-- Graceful shutdown using Tokio signal handling (`Ctrl+C`, and `SIGTERM` on Unix)
+| Field               | Type       | Notes                                     |
+| ------------------- | ---------- | ----------------------------------------- |
+| id                  | UUID v7    | Primary key, default `uuid_generate_v7()` |
+| name                | VARCHAR    | Unique, full name                         |
+| gender              | VARCHAR    | `male` or `female`                        |
+| gender_probability  | FLOAT      | Confidence score                          |
+| age                 | INT        | Exact age                                 |
+| age_group           | VARCHAR    | `child`, `teenager`, `adult`, `senior`    |
+| country_id          | VARCHAR(2) | ISO code (`NG`, `BJ`, etc.)               |
+| country_name        | VARCHAR    | Full country name                         |
+| country_probability | FLOAT      | Confidence score                          |
+| created_at          | TIMESTAMP  | Auto-generated                            |
 
-## External APIs Used
+## Seeding
 
-- Genderize: `https://api.genderize.io?name={name}`
-- Agify: `https://api.agify.io?name={name}`
-- Nationalize: `https://api.nationalize.io?name={name}`
+- Seed source: [assets/seed_profiles.json](assets/seed_profiles.json)
+- Seeding runs on server start (after migrations)
+- Seeding inserts omit `id`; DB default generates UUID automatically
+- Seed insert uses `ON CONFLICT (name) DO NOTHING` to avoid duplicates
 
-No API keys required.
+## GET /api/profiles
 
-## Classification Rules
+Supports all filters together, plus sorting and pagination.
 
-- Age group from Agify:
-- `0-12` -> `child`
-- `13-19` -> `teenager`
-- `20-59` -> `adult`
-- `60+` -> `senior`
-- Nationality: highest probability country from Nationalize response
+### Query Parameters
 
-## Tech Stack
-
-- Rust (edition 2024)
-- Axum
-- Tokio
-- SQLx + PostgreSQL
-- Reqwest
-- Serde
-- Tracing
-
-## Project Structure
-
-```text
-src/
-	app.rs        # app startup, DB pool, routes, graceful shutdown
-	main.rs       # entrypoint
-	handlers.rs   # HTTP handlers
-	external.rs   # external API client + classification orchestration
-	db.rs         # DB queries
-	models.rs     # API/DB models and age-group enum
-	utils.rs      # request parsing and normalization helpers
-	error.rs      # unified API error responses
-	state.rs      # shared app state (DB pool + HTTP client)
-migrations/
-	*.sql         # schema migrations
-```
-
-## Prerequisites
-
-- Rust toolchain installed
-- PostgreSQL database (Neon or local)
-
-## Environment Variables
-
-Create a `.env` file:
-
-```env
-DATABASE_URL="postgresql://<user>:<password>@<host>/<db>?sslmode=require"
-PORT=8080
-```
-
-- `DATABASE_URL` is required
-- `PORT` is optional (defaults to `3000`)
-
-## Run Locally
-
-1. Install dependencies and build:
-
-```bash
-cargo build
-```
-
-2. Run the app:
-
-```bash
-cargo run
-```
-
-3. The server listens on:
-
-- `0.0.0.0:${PORT}` if `PORT` is set
-- `0.0.0.0:3000` otherwise
-
-## Database Migrations
-
-Migrations are run automatically on startup.
-
-If startup fails, verify:
-
-- `DATABASE_URL` is correct
-- database user has permissions to create table/index
-
-## API
-
-Base URL (local): `http://localhost:3000` or your configured port.
-
-### 1) Create Profile
-
-`POST /api/profiles`
-
-Request:
-
-```json
-{
-	"name": "ella"
-}
-```
-
-Success (created): `201`
-
-```json
-{
-	"status": "success",
-	"data": {
-		"id": "b3f9c1e2-7d4a-4c91-9c2a-1f0a8e5b6d12",
-		"name": "ella",
-		"gender": "female",
-		"gender_probability": 0.99,
-		"sample_size": 1234,
-		"age": 46,
-		"age_group": "adult",
-		"country_id": "DRC",
-		"country_probability": 0.85,
-		"created_at": "2026-04-01T12:00:00Z"
-	}
-}
-```
-
-Duplicate name behavior:
-
-- Returns existing profile
-- Status: `200`
-
-```json
-{
-	"status": "success",
-	"message": "Profile already exists",
-	"data": {
-		"id": "b3f9c1e2-7d4a-4c91-9c2a-1f0a8e5b6d12",
-		"name": "ella",
-		"gender": "female",
-		"gender_probability": 0.99,
-		"sample_size": 1234,
-		"age": 46,
-		"age_group": "adult",
-		"country_id": "DRC",
-		"country_probability": 0.85,
-		"created_at": "2026-04-01T12:00:00Z"
-	}
-}
-```
-
-### 2) Get Single Profile
-
-`GET /api/profiles/{id}`
-
-Success: `200`
-
-```json
-{
-	"status": "success",
-	"data": {
-		"id": "b3f9c1e2-7d4a-4c91-9c2a-1f0a8e5b6d12",
-		"name": "emmanuel",
-		"gender": "male",
-		"gender_probability": 0.99,
-		"sample_size": 1234,
-		"age": 25,
-		"age_group": "adult",
-		"country_id": "NG",
-		"country_probability": 0.85,
-		"created_at": "2026-04-01T12:00:00Z"
-	}
-}
-```
-
-### 3) Get All Profiles
-
-`GET /api/profiles`
-
-Optional query parameters (case-insensitive):
+Filters:
 
 - `gender`
-- `country_id`
 - `age_group`
+- `country_id`
+- `min_age`
+- `max_age`
+- `min_gender_probability`
+- `min_country_probability`
+
+Sorting:
+
+- `sort_by`: `age` | `created_at` | `gender_probability`
+- `order`: `asc` | `desc`
+
+Pagination:
+
+- `page`: default `1`
+- `limit`: default `10`, max `50`
 
 Example:
 
-`GET /api/profiles?gender=male&country_id=NG`
+```http
+GET /api/profiles?gender=male&country_id=NG&min_age=25&sort_by=age&order=desc&page=1&limit=10
+```
 
-Success: `200`
+Success (`200`):
 
 ```json
 {
 	"status": "success",
-	"count": 2,
+	"page": 1,
+	"limit": 10,
+	"total": 2026,
 	"data": [
 		{
-			"id": "id-1",
+			"id": "b3f9c1e2-7d4a-4c91-9c2a-1f0a8e5b6d12",
 			"name": "emmanuel",
 			"gender": "male",
-			"age": 25,
+			"gender_probability": 0.99,
+			"age": 34,
 			"age_group": "adult",
-			"country_id": "NG"
-		},
-		{
-			"id": "id-2",
-			"name": "sarah",
-			"gender": "female",
-			"age": 28,
-			"age_group": "adult",
-			"country_id": "US"
+			"country_id": "NG",
+			"country_name": "Nigeria",
+			"country_probability": 0.85,
+			"created_at": "2026-04-01T12:00:00Z"
 		}
 	]
 }
 ```
 
-### 4) Delete Profile
+## GET /api/profiles/search
 
-`DELETE /api/profiles/{id}`
+```http
+GET /api/profiles/search?q=young males from nigeria&page=1&limit=10
+```
 
-Success: `204 No Content`
+Rule-based parsing only (no AI/LLMs). Pagination works the same as `/api/profiles`.
 
-## Error Format
+Success response shape is identical to `GET /api/profiles`.
 
-All errors follow:
+When query cannot be interpreted:
 
 ```json
-{
-	"status": "error",
-	"message": "<error message>"
-}
+{ "status": "error", "message": "Unable to interpret query" }
 ```
 
-Common statuses:
+## Natural Language Parser Approach
 
-- `400 Bad Request`: Missing or empty name
-- `422 Unprocessable Entity`: Invalid type
-- `404 Not Found`: Profile not found
-- `500 Internal Server Error`: Server failure
-- `502 Bad Gateway`: External API invalid response
+The parser is deterministic and keyword-based:
 
-`502` message format:
+1. Normalize input:
+
+- Lowercase text
+- Remove punctuation
+- Tokenize by whitespace
+
+2. Extract supported intents:
+
+- Gender keywords
+- Age-group keywords
+- Age threshold keywords (`above`, `over`, `below`, `under`)
+- Country phrase after `from ...`
+- Special keyword `young`
+
+3. Build filters:
+
+- Merge all detected conditions into one `ProfileFilters` object
+- All resulting filters are combined with logical AND in SQL
+
+4. Validate interpretation:
+
+- If no supported condition is found, return `Unable to interpret query`
+
+### Supported Keyword Mapping
+
+- `young` -> `min_age=16` and `max_age=24`
+- `male`, `males`, `man`, `men`, `boy`, `boys` -> `gender=male`
+- `female`, `females`, `woman`, `women`, `girl`, `girls` -> `gender=female`
+- `child`, `children`, `kid`, `kids` -> `age_group=child`
+- `teen`, `teens`, `teenager`, `teenagers` -> `age_group=teenager`
+- `adult`, `adults` -> `age_group=adult`
+- `senior`, `seniors`, `elderly` -> `age_group=senior`
+- `above N` or `over N` -> `min_age=N`
+- `below N` or `under N` -> `max_age=N`
+- `from <country>` -> mapped to `country_id` (supported country keyword map)
+
+Examples:
+
+- `young males` -> `gender=male` + `min_age=16` + `max_age=24`
+- `females above 30` -> `gender=female` + `min_age=30`
+- `people from angola` -> `country_id=AO`
+- `adult males from kenya` -> `gender=male` + `age_group=adult` + `country_id=KE`
+- `male and female teenagers above 17` -> `age_group=teenager` + `min_age=17`
+
+## Parser Limitations
+
+- Only keyword/rule matching is supported; no semantic or contextual inference.
+- Country extraction expects `from ...` pattern.
+- Country recognition is limited to the built-in mapping list.
+- Comparative expressions beyond supported tokens are not handled (for example: `at least`, `not older than`, `between`).
+- Complex negation and exclusion queries are not supported.
+- Multiple unrelated clauses with conflicting meanings may be reduced to best-effort filters.
+
+## Error Contract
+
+All errors:
 
 ```json
-{
-	"status": "error",
-	"message": "${externalApi} returned an invalid response"
-}
+{ "status": "error", "message": "<error message>" }
 ```
 
-Where `externalApi` is one of:
+Status rules:
 
-- `Genderize`
-- `Agify`
-- `Nationalize`
+- `400 Bad Request` -> missing or empty parameter
+- `422 Unprocessable Entity` -> invalid parameter type/value
+- `404 Not Found` -> profile not found
+- `500` / `502` -> server/upstream failures
 
-## External API Edge Cases
+Invalid query parameters return:
 
-The service returns `502` and does not store data when:
-
-- Genderize returns `gender: null`
-- Genderize returns `count: 0`
-- Agify returns `age: null`
-- Nationalize returns no country data
-
-## Graceful Shutdown
-
-The server exits gracefully on:
-
-- `Ctrl+C`
-- `SIGTERM` (Unix)
-
-This is implemented with Tokio signal handling and Axum graceful shutdown.
-
-## Quick cURL Examples
-
-Create:
-
-```bash
-curl -X POST http://localhost:3000/api/profiles \
-	-H "Content-Type: application/json" \
-	-d '{"name":"ella"}'
+```json
+{ "status": "error", "message": "Invalid query parameters" }
 ```
 
-List:
+## Performance Notes
 
-```bash
-curl "http://localhost:3000/api/profiles?gender=female"
-```
+To reduce expensive scans under filtering/sorting:
 
-Get by ID:
+- Dedicated indexes exist for common filter/sort fields
+- Composite index exists for common multi-filter path (`gender`, `country_id`, `age`)
+- Queries are paginated with `LIMIT/OFFSET`
+- Count and page data queries share the same filters
 
-```bash
-curl http://localhost:3000/api/profiles/<uuid>
-```
-
-Delete:
-
-```bash
-curl -X DELETE http://localhost:3000/api/profiles/<uuid>
-```
-
-## Development Commands
+## Run
 
 ```bash
 cargo fmt --all
 cargo check
+cargo run
 ```

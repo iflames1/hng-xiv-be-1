@@ -5,22 +5,25 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
     db,
     error::AppError,
     external::ExternalApiClient,
-    models::{ApiResponse, ProfileDetail, ProfileFilters, ProfileSummary},
+    models::{ApiResponse, Pagination, ProfileDetail, ProfileListItem},
     state::AppState,
-    utils::{extract_name, map_json_rejection, normalize_optional_lower, normalize_optional_upper},
+    utils::{extract_name, map_json_rejection, parse_list_profiles_query, parse_search_query},
 };
 
-#[derive(Debug, serde::Deserialize)]
-pub struct ListProfilesQuery {
-    pub gender: Option<String>,
-    pub country_id: Option<String>,
-    pub age_group: Option<String>,
+#[derive(serde::Serialize)]
+struct PagedProfilesResponse {
+    status: &'static str,
+    page: u32,
+    limit: u32,
+    total: i64,
+    data: Vec<ProfileListItem>,
 }
 
 pub async fn create_profile(
@@ -86,27 +89,67 @@ pub async fn get_profile(
 
 pub async fn list_profiles(
     State(state): State<AppState>,
-    Query(query): Query<ListProfilesQuery>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> Result<Response, AppError> {
-    let filters = ProfileFilters {
-        gender: normalize_optional_lower(query.gender),
-        country_id: normalize_optional_upper(query.country_id),
-        age_group: normalize_optional_lower(query.age_group),
-    };
+    let request = parse_list_profiles_query(&query)?;
 
-    let profiles = db::list_profiles(&state.pool, &filters)
+    let total = db::count_profiles(&state.pool, &request.filters)
         .await
         .map_err(|_| AppError::internal("failed to read profiles"))?;
 
-    let data: Vec<ProfileSummary> = profiles
+    let profiles = db::list_profiles(&state.pool, &request)
+        .await
+        .map_err(|_| AppError::internal("failed to read profiles"))?;
+
+    let data: Vec<ProfileListItem> = profiles
         .into_iter()
-        .map(ProfileSummary::try_from)
+        .map(ProfileListItem::try_from)
         .collect::<Result<Vec<_>, _>>()?;
-    let count = data.len();
-    let response = ApiResponse {
+    let response = PagedProfilesResponse {
         status: "success",
-        message: None,
-        count: Some(count),
+        page: request.pagination.page,
+        limit: request.pagination.limit,
+        total,
+        data,
+    };
+
+    Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+pub async fn search_profiles(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Response, AppError> {
+    let (parsed, pagination) = parse_search_query(&query)?;
+
+    let request = crate::models::ListProfilesRequest {
+        filters: parsed.filters,
+        sort_by: crate::models::SortBy::CreatedAt,
+        order: crate::models::SortOrder::Desc,
+        pagination: Pagination {
+            page: pagination.page,
+            limit: pagination.limit,
+        },
+    };
+
+    let total = db::count_profiles(&state.pool, &request.filters)
+        .await
+        .map_err(|_| AppError::internal("failed to read profiles"))?;
+
+    let profiles = db::list_profiles(&state.pool, &request)
+        .await
+        .map_err(|_| AppError::internal("failed to read profiles"))?;
+
+    let data: Vec<ProfileListItem> = profiles
+        .into_iter()
+        .map(ProfileListItem::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let response = PagedProfilesResponse {
+        status: "success",
+        page: request.pagination.page,
+        limit: request.pagination.limit,
+        total,
         data,
     };
 
