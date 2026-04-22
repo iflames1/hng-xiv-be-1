@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::str::FromStr;
@@ -51,7 +51,7 @@ pub struct ProfileRow {
     pub country_id: String,
     pub country_name: String,
     pub country_probability: f64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: NaiveDateTime,
 }
 
 #[derive(Serialize)]
@@ -225,7 +225,7 @@ impl TryFrom<ProfileRow> for ProfileDetail {
             country_id: row.country_id,
             country_name: row.country_name,
             country_probability: row.country_probability,
-            created_at: row.created_at,
+            created_at: row.created_at.and_utc(),
         })
     }
 }
@@ -247,7 +247,7 @@ impl TryFrom<ProfileRow> for ProfileListItem {
             country_id: row.country_id,
             country_name: row.country_name,
             country_probability: row.country_probability,
-            created_at: row.created_at,
+            created_at: row.created_at.and_utc(),
         })
     }
 }
